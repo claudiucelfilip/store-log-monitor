@@ -1,9 +1,22 @@
-import { Component, Input  } from '@angular/core';
+import { Component, Input, ApplicationRef } from '@angular/core';
 import { Observable } from 'rxjs/Observable';
+import { Observer } from 'rxjs/Observer';
+import { Subject } from 'rxjs/Subject';
+import 'rxjs/Rx';
 import { map } from 'rxjs/operator/map';
 import { StoreDevtools } from '@ngrx/store-devtools';
 import { select } from '@ngrx/core/operator/select';
 import { LogEntryItem } from './log-entry-item';
+import { Store } from "@ngrx/store";
+
+interface FileReaderEventTarget extends EventTarget {
+  result: string
+}
+
+interface FileReaderEvent extends Event {
+  target: FileReaderEventTarget;
+  getMessage(): string;
+}
 
 
 @Component({
@@ -59,6 +72,12 @@ import { LogEntryItem } from './log-entry-item';
       <log-monitor-button (action)="handleCommit()" [disabled]="canCommit$ | async">
         Commit
       </log-monitor-button>
+      <log-monitor-button (action)="handleExport()">
+        Export
+      </log-monitor-button>
+      <log-monitor-button (action)="handleImport()">
+        Import
+      </log-monitor-button>
     </div>
     <div class="elements">
       <log-monitor-entry
@@ -78,8 +97,10 @@ export class LogMonitorComponent {
   public canRevert$: Observable<boolean>;
   public canSweep$: Observable<boolean>;
   public canCommit$: Observable<boolean>;
+  export$ = new Subject();
+  import$ = new Subject();
 
-  constructor(private devtools: StoreDevtools) {
+  constructor(private devtools: StoreDevtools, private store: Store<any>, private ref: ApplicationRef) {
     this.canRevert$ = select.call(devtools.liftedState, s => !(s.computedStates.length > 1 ));
     this.canSweep$ = select.call(devtools.liftedState, s => !(s.skippedActionIds.length > 0));
     this.canCommit$ = select.call(devtools.liftedState, s => !(s.computedStates.length > 1));
@@ -109,6 +130,77 @@ export class LogMonitorComponent {
 
         return actions;
       });
+
+    this.initImporter();
+    this.initExporter();
+  }
+
+  private initExporter() {
+    let downloadLink = document.createElement('a');
+
+    this.devtools.liftedState
+      .sample(this.export$)
+      .subscribe(state => {
+        let actionsJsonStr = JSON.stringify(state.actionsById);
+        let timestamp = (new Date()).getTime();
+        let actionsJsonUri = "data:application/octet-stream," + encodeURIComponent(actionsJsonStr);
+
+        downloadLink.setAttribute('href', actionsJsonUri);
+        downloadLink.setAttribute('download', `states-${timestamp}.json`);
+
+        this.triggerClick(downloadLink);
+      });
+  }
+
+  private initImporter() {
+    let inputElement = document.createElement('input');
+    inputElement.value = null;
+    inputElement.setAttribute('type', 'file');
+
+    this.import$.subscribe(() => {
+      this.triggerClick(inputElement);
+    });
+
+    Observable
+      .fromEvent(inputElement, 'change')
+      .subscribe(() => {
+        this.devtools.reset();
+
+        let file = inputElement.files[0];
+        let reader = new FileReader();
+
+        let onload$ = Observable.create((observer: Observer<FileReaderEvent>) => {
+          reader.onload = observer.next.bind(observer);
+          reader.onabort = observer.error.bind(observer);
+        });
+        inputElement.value = '';
+        onload$.subscribe((event: FileReaderEvent) => {
+          let actions = JSON.parse(event.target.result);
+
+          actions = Object
+            .keys(actions)
+            .map(key => actions[key])
+            .forEach(item => {
+              this.store.dispatch(item.action);
+              this.ref.tick();  // FileReader onload event doesn't trigger angular change detection
+            });
+        }, (err) => {
+          console.log(err);
+        });
+
+        reader.readAsText(file);
+      });
+  }
+
+  private triggerClick(element) {
+    if (document.createEvent) {
+      var event = document.createEvent('MouseEvents');
+      event.initEvent('click', true, true);
+      element.dispatchEvent(event);
+    }
+    else {
+      element.click();
+    }
   }
 
   handleToggle(id: number) {
@@ -130,4 +222,14 @@ export class LogMonitorComponent {
   handleCommit() {
     this.devtools.commit();
   }
+
+  handleImport() {
+    this.import$.next();
+  }
+
+  handleExport() {
+    this.export$.next();
+  }
+
+
 }
