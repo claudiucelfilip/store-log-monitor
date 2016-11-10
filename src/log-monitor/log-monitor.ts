@@ -1,9 +1,10 @@
-import { Component, Input, ApplicationRef } from '@angular/core';
+import { Component, Input, ApplicationRef, OnInit, Output, EventEmitter } from '@angular/core';
 import { Observable } from 'rxjs/Observable';
 import { Observer } from 'rxjs/Observer';
 import { Subject } from 'rxjs/Subject';
 import 'rxjs/add/operator/sample';
 import 'rxjs/add/observable/fromEvent';
+import 'rxjs/add/operator/combineLatest';
 import { map } from 'rxjs/operator/map';
 import { StoreDevtools } from '@ngrx/store-devtools';
 import { select } from '@ngrx/core/operator/select';
@@ -91,8 +92,9 @@ interface FileReaderEvent extends Event {
     </div>
   `
 })
-export class LogMonitorComponent {
+export class LogMonitorComponent implements OnInit{
   @Input() expandEntries: boolean = true;
+  @Output() liftedStore = new EventEmitter<any>();
 
   public items$: Observable<LogEntryItem[]>;
   public canRevert$: Observable<boolean>;
@@ -136,6 +138,12 @@ export class LogMonitorComponent {
     this.initExporter();
   }
 
+
+  ngOnInit() {
+    this.devtools.liftedState
+      .subscribe(this.liftedStore.emit.bind(this.liftedStore));
+  }
+
   private initExporter() {
     let downloadLink = document.createElement('a');
 
@@ -147,7 +155,7 @@ export class LogMonitorComponent {
         let actionsJsonUri = "data:application/octet-stream," + encodeURIComponent(actionsJsonStr);
 
         downloadLink.setAttribute('href', actionsJsonUri);
-        downloadLink.setAttribute('download', `states-${timestamp}.json`);
+        downloadLink.setAttribute('download', `store-${timestamp}.json`);
 
         this.triggerClick(downloadLink);
       });
@@ -188,6 +196,7 @@ export class LogMonitorComponent {
         }, (err) => {
           console.log(err);
         });
+
 
         reader.readAsText(file);
       });
